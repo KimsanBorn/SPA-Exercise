@@ -1,6 +1,6 @@
 // =============================================================
 // server.js — Phone Book Lab: Securing the Handshake
-// Covers: express-session, csurf, CSRF token route, CORS
+// Covers: express-session, csurf, CSRF token route, CORS, test
 // =============================================================
 
 const express = require("express");
