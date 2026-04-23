@@ -83,22 +83,34 @@ function requireAuth(req, res, next) {
 }
 
 // Protected routes 
-//   GET /api/contacts — read only; no CSRF needed for GET
-app.get("/api/contacts", requireAuth, (req, res) => {
-  res.json(contacts);
+//   GET /api/contacts/:id — read single contact
+app.get("/api/contacts/:id", requireAuth, (req, res) => {
+  const contact = contacts.find((c) => c.id === Number(req.params.id));
+  if (!contact) return res.status(404).json({ error: "Contact not found" });
+  res.json(contact);
 });
 
-//   POST /api/contacts — mutating; csurf checks the token automatically
-app.post("/api/contacts", requireAuth, (req, res) => {
-  const { name, phone } = req.body;
+//   PUT /api/contacts/:id — update; csurf checks the token automatically
+app.put("/api/contacts/:id", requireAuth, (req, res) => {
+  const index = contacts.findIndex((c) => c.id === Number(req.params.id));
+  if (index === -1) return res.status(404).json({ error: "Contact not found" });
 
+  const { name, phone } = req.body;
   if (!name || !phone) {
     return res.status(400).json({ error: "name and phone are required" });
   }
 
-  const contact = { id: nextId++, name, phone };
-  contacts.push(contact);
-  res.status(201).json(contact);
+  contacts[index] = { ...contacts[index], name, phone };
+  res.json(contacts[index]);
+});
+
+//   DELETE /api/contacts/:id — mutating; csurf checks the token automatically
+app.delete("/api/contacts/:id", requireAuth, (req, res) => {
+  const index = contacts.findIndex((c) => c.id === Number(req.params.id));
+  if (index === -1) return res.status(404).json({ error: "Contact not found" });
+
+  contacts.splice(index, 1);
+  res.status(204).send();
 });
 
 // CSRF error handler
