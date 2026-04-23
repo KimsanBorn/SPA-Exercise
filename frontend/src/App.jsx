@@ -1,44 +1,39 @@
-// =============================================================
-// App.jsx — Phone Book Lab: Securing the Handshake
-// Covers: fetch CSRF token on mount, include header on POST,
-//         credentials: "include" for session cookies
-// =============================================================
-
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-// ── Axios instance ────────────────────────────────────────────
-// STUDENT TASK (Bonus): credentials: "include" ensures the browser
-// sends the session cookie on every request, even cross-origin.
 const api = axios.create({
   baseURL: "http://localhost:3001",
-  withCredentials: true, // ← "credentials: 'include'" equivalent in Axios
+  withCredentials: true, 
 });
 
 export default function App() {
-  // ── State ───────────────────────────────────────────────────
-  const [csrfToken,  setCsrfToken]  = useState("");   // TASK 2a
+  const [csrfToken,  setCsrfToken]  = useState("");  
   const [loggedIn,   setLoggedIn]   = useState(false);
   const [username,   setUsername]   = useState("");
   const [password,   setPassword]   = useState("");
   const [contacts,   setContacts]   = useState([]);
-  const [newName,    setNewName]     = useState("");
-  const [newPhone,   setNewPhone]    = useState("");
+  const [newName,    setNewName]    = useState("");
+  const [newPhone,   setNewPhone]   = useState("");
   const [statusMsg,  setStatusMsg]  = useState("");
+  const [editId,     setEditId]     = useState(null);
+  const [editName,   setEditName]   = useState("");
+  const [editPhone,  setEditPhone]  = useState("");
 
-  // ── STUDENT TASK 2a: Fetch CSRF token on mount ───────────────
-  // useEffect runs once after the first render (empty dep array).
-  // We call the /api/csrf-token endpoint and store the token in state
-  // so every subsequent mutating request can include it.
   useEffect(() => {
-    api
-      .get("/api/csrf-token")
+    api.get("/api/csrf-token").then((res) => {
+      setCsrfToken(res.data.csrfToken);
+    });
+
+    api.get("/api/me")
       .then((res) => {
-        setCsrfToken(res.data.csrfToken);
-        console.log("✅ CSRF token received:", res.data.csrfToken);
+        setLoggedIn(true);
+        setStatusMsg(`Welcome back, ${res.data.username}!`);
+        api.get("/api/contacts").then((r) => setContacts(r.data));
       })
-      .catch((err) => console.error("Could not fetch CSRF token:", err));
+      .catch(() => {});
   }, []);
+
+  const csrfHeader = { "x-csrf-token": csrfToken };
 
   // ── Login ────────────────────────────────────────────────────
   const handleLogin = async (e) => {
@@ -48,18 +43,18 @@ export default function App() {
       const res = await api.post(
         "/api/login",
         { username, password },
-        { headers: { "x-csrf-token": csrfToken } } // TASK 2b pattern
+        { headers: csrfHeader }
       );
       setLoggedIn(true);
-      setStatusMsg(`👋 Welcome, ${res.data.username}!`);
+      setStatusMsg(`Welcome, ${res.data.username}!`);
       loadContacts();
     } catch {
-      setStatusMsg("❌ Login failed. Try student / lab123");
+      setStatusMsg(" Login failed. Try student / lab123");
     }
   };
 
   const handleLogout = async () => {
-    await api.post("/api/logout", {}, { headers: { "x-csrf-token": csrfToken } });
+    await api.post("/api/logout", {}, { headers: csrfHeader });
     setLoggedIn(false);
     setContacts([]);
     setStatusMsg("Logged out.");
@@ -71,35 +66,78 @@ export default function App() {
       const res = await api.get("/api/contacts");
       setContacts(res.data);
     } catch {
-      setStatusMsg("❌ Could not load contacts (session expired?)");
+      setStatusMsg("Could not load contacts (session expired?)");
     }
   };
 
-  // ── STUDENT TASK 2b: Add contact with CSRF token header ──────
-  // The x-csrf-token header is how csurf (server side) verifies the
-  // request originated from OUR frontend, not a malicious third-party site.
+  // ── Create ────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
       const res = await api.post(
         "/api/contacts",
         { name: newName, phone: newPhone },
-        {
-          headers: {
-            "x-csrf-token": csrfToken, // ← CSRF token attached here
-          },
-        }
+        { headers: csrfHeader }
       );
       setContacts((prev) => [...prev, res.data]);
       setNewName("");
       setNewPhone("");
-      setStatusMsg(`✅ Contact "${res.data.name}" added!`);
+      setStatusMsg(`Contact "${res.data.name}" added!`);
     } catch (err) {
-      // 403 means the server rejected the CSRF token
       if (err.response?.status === 403) {
-        setStatusMsg("🚫 CSRF token rejected — request blocked by server.");
+        setStatusMsg("CSRF token rejected — request blocked by server.");
       } else {
-        setStatusMsg("❌ Failed to add contact.");
+        setStatusMsg("Failed to add contact.");
+      }
+    }
+  };
+
+  // ── Edit helpers ──────────────────────────────────────────────
+  const startEdit = (contact) => {
+    setEditId(contact.id);
+    setEditName(contact.name);
+    setEditPhone(contact.phone);
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditName("");
+    setEditPhone("");
+  };
+
+  // ── Update ────────────────────────────────────────────────────
+  const handleUpdate = async (e, id) => {
+    e.preventDefault();
+    try {
+      const res = await api.put(
+        `/api/contacts/${id}`,
+        { name: editName, phone: editPhone },
+        { headers: csrfHeader }
+      );
+      setContacts((prev) => prev.map((c) => (c.id === id ? res.data : c)));
+      setStatusMsg(`Contact "${res.data.name}" updated!`);
+      cancelEdit();
+    } catch (err) {
+      if (err.response?.status === 403) {
+        setStatusMsg("CSRF token rejected — request blocked by server.");
+      } else {
+        setStatusMsg("Failed to update contact.");
+      }
+    }
+  };
+
+  // ── Delete ────────────────────────────────────────────────────
+  const handleDelete = async (id, name) => {
+    if (!window.confirm(`Delete "${name}"?`)) return;
+    try {
+      await api.delete(`/api/contacts/${id}`, { headers: csrfHeader });
+      setContacts((prev) => prev.filter((c) => c.id !== id));
+      setStatusMsg(`Contact "${name}" deleted.`);
+    } catch (err) {
+      if (err.response?.status === 403) {
+        setStatusMsg("CSRF token rejected — request blocked by server.");
+      } else {
+        setStatusMsg("Failed to delete contact.");
       }
     }
   };
@@ -108,7 +146,7 @@ export default function App() {
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <h1 style={styles.title}>📒 Phone Book</h1>
+        <h1 style={styles.title}>Phone Book</h1>
         <p style={styles.subtitle}>Lab: Securing the Handshake</p>
       </header>
 
@@ -121,7 +159,7 @@ export default function App() {
         <br />
         CSRF Token: <code>{csrfToken || "—not yet fetched—"}</code>
         <br />
-        Session: {loggedIn ? "✅ Active" : "❌ None"}
+        Session: {loggedIn ? "Active" : "None"}
       </div>
 
       {!loggedIn ? (
@@ -188,12 +226,42 @@ export default function App() {
               <p style={styles.hint}>No contacts yet.</p>
             ) : (
               <ul style={styles.list}>
-                {contacts.map((c) => (
-                  <li key={c.id} style={styles.listItem}>
-                    <span style={styles.contactName}>{c.name}</span>
-                    <span style={styles.contactPhone}>{c.phone}</span>
-                  </li>
-                ))}
+                {contacts.map((c) =>
+                  editId === c.id ? (
+                    <li key={c.id} style={styles.listItem}>
+                      <form
+                        onSubmit={(e) => handleUpdate(e, c.id)}
+                        style={styles.editForm}
+                      >
+                        <input
+                          style={styles.inputSm}
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          required
+                        />
+                        <input
+                          style={styles.inputSm}
+                          value={editPhone}
+                          onChange={(e) => setEditPhone(e.target.value)}
+                          required
+                        />
+                        <div style={styles.editActions}>
+                          <button style={styles.btnSave} type="submit">Save</button>
+                          <button style={styles.btnCancel} type="button" onClick={cancelEdit}>Cancel</button>
+                        </div>
+                      </form>
+                    </li>
+                  ) : (
+                    <li key={c.id} style={styles.listItem}>
+                      <span style={styles.contactName}>{c.name}</span>
+                      <span style={styles.contactPhone}>{c.phone}</span>
+                      <div style={styles.rowActions}>
+                        <button style={styles.btnEdit} onClick={() => startEdit(c)}>Edit</button>
+                        <button style={styles.btnDelete} onClick={() => handleDelete(c.id, c.name)}>Delete</button>
+                      </div>
+                    </li>
+                  )
+                )}
               </ul>
             )}
           </section>
@@ -285,10 +353,72 @@ const styles = {
   listItem: {
     display: "flex",
     justifyContent: "space-between",
+    alignItems: "center",
     padding: "8px 0",
     borderBottom: "1px solid #334155",
     fontSize: 14,
+    gap: 8,
   },
-  contactName:  { fontWeight: "bold" },
-  contactPhone: { color: "#cbd5e1" },
+  contactName:  { fontWeight: "bold", flex: 1 },
+  contactPhone: { color: "#cbd5e1", flex: 1 },
+  rowActions: { display: "flex", gap: 6, flexShrink: 0 },
+  inputSm: {
+    padding: "5px 8px",
+    border: "1px solid #334155",
+    borderRadius: 6,
+    fontSize: 13,
+    fontFamily: "inherit",
+    background: "#0f172a",
+    color: "#e5e7eb",
+    flex: 1,
+    minWidth: 0,
+  },
+  editForm: {
+    display: "flex",
+    gap: 6,
+    width: "100%",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  editActions: { display: "flex", gap: 6 },
+  btnEdit: {
+    padding: "3px 10px",
+    background: "transparent",
+    border: "1px solid #475569",
+    color: "#93c5fd",
+    borderRadius: 5,
+    cursor: "pointer",
+    fontSize: 12,
+    fontFamily: "inherit",
+  },
+  btnDelete: {
+    padding: "3px 10px",
+    background: "transparent",
+    border: "1px solid #475569",
+    color: "#f87171",
+    borderRadius: 5,
+    cursor: "pointer",
+    fontSize: 12,
+    fontFamily: "inherit",
+  },
+  btnSave: {
+    padding: "4px 12px",
+    background: "#16a34a",
+    border: "none",
+    color: "#fff",
+    borderRadius: 5,
+    cursor: "pointer",
+    fontSize: 12,
+    fontFamily: "inherit",
+  },
+  btnCancel: {
+    padding: "4px 12px",
+    background: "transparent",
+    border: "1px solid #475569",
+    color: "#e2e8f0",
+    borderRadius: 5,
+    cursor: "pointer",
+    fontSize: 12,
+    fontFamily: "inherit",
+  },
 };
